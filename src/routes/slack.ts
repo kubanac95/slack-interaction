@@ -1,15 +1,18 @@
 import * as qs from "qs";
+import * as axios from "axios";
 import * as crypto from "crypto";
 import * as express from "express";
 import * as bodyParser from "body-parser";
 
+import { IncomingWebhook } from "@slack/webhook";
+
 // https://api.slack.com/interactivity/handling#payloads
 enum EInteractionType {
-  shortcut,
-  message_actions,
-  block_actions,
-  view_submission,
-  view_closed,
+  shortcut = "shortcut",
+  message_actions = "message_actions",
+  block_actions = "block_actions",
+  view_submission = "view_submission",
+  view_closed = "view_closed",
 }
 
 type TTeam = {
@@ -38,7 +41,7 @@ interface IInteraction {
   trigger_id: string;
 }
 
-interface IInteractionBlockAction {
+interface IInteractionBlockAction extends IInteraction {
   type: EInteractionType.block_actions;
   api_app_id: string;
   container: {
@@ -48,6 +51,10 @@ interface IInteractionBlockAction {
     is_ephemeral: boolean;
   };
   actions: TInteractionAction[];
+  response_url: string;
+  message: {
+    blocks: [];
+  };
 }
 
 interface TInteractionShortcut extends IInteraction {
@@ -117,17 +124,68 @@ const authenticate = (
 
 router.use(bodyParser.urlencoded({ extended: true }));
 
-router.use(authenticate);
+router.get("/oauth", async (req, res) => {
+  const {
+    query: { code, state: userId },
+  } = req;
+
+  // * https://api.slack.com/methods/oauth.v2.access
+  axios
+    .default({
+      method: "post",
+      url: "https://slack.com/api/oauth.v2.access",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      data: qs.stringify({
+        code,
+        client_id: process.env.SLACK_CLIENT_ID as string,
+        client_secret: process.env.SLACK_CLIENT_SECRET as string,
+      }),
+    })
+    .then(({ data: slackResponse }) => {
+      const { ok, ...rest } = slackResponse;
+
+      if (!slackResponse.ok) {
+        res.redirect(
+          "https://example.com?is_integratin_good_key_example=false"
+        );
+
+        return;
+      }
+      // ! Save integration details in database of choice.
+
+      res.redirect("https://example.com?is_integratin_good_key_example=true");
+
+      return;
+    })
+    .catch((error) => {
+      res.redirect("https://example.com?is_integratin_good_key_example=false");
+    });
+});
+
 router.post(
   "/interactivity",
+  authenticate,
   async ({ body: { payload: payloadJSON } }, res) => {
     const payload = JSON.parse(payloadJSON) as IInteraction;
 
     switch (payload.type) {
       case EInteractionType.block_actions: {
         const {
+          message,
+          response_url,
           actions: [{ action_id, value }],
-        } = (payload as unknown) as IInteractionBlockAction;
+        } = payload as IInteractionBlockAction;
+
+        axios.default
+          .post(response_url, {
+            text:
+              "Thanks for your request, we'll process it and get back to you.",
+            response_type: "ephemeral",
+          })
+          .then(console.log)
+          .catch(console.log);
       }
 
       case EInteractionType.shortcut: {
